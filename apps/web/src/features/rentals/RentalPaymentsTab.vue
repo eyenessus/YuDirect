@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { CheckCircle2, Pencil, Plus, Trash2 } from 'lucide-vue-next';
+import { CheckCircle2, FileText, Pencil, Plus, Trash2 } from 'lucide-vue-next';
 import {
   formatCentsBRL,
   formatIsoDateBR,
   paymentMethodLabels,
   rentalPaymentCategoryLabels,
   rentalPaymentStatusLabels,
+  type PaymentReceiptDTO,
   type RentalPaymentEntry,
   type RentalPaymentsView,
 } from '@yudirect/contracts';
@@ -102,6 +103,35 @@ function onAction(key: string, entry: RentalPaymentEntry) {
   else deleteTarget.value = entry;
 }
 
+/* Comprovantes enviados pelo motorista no WhatsApp: o dono confere e dá a baixa no pagamento. */
+const receipts = ref<PaymentReceiptDTO[]>([]);
+const reviewing = ref<string | null>(null);
+const pendingReceipts = computed(() => receipts.value.filter((r) => r.status === 'PENDING_REVIEW').length);
+const formatDateTimeBR = (iso: string) =>
+  new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });
+
+async function loadReceipts() {
+  try {
+    receipts.value = (await api.get<{ data: PaymentReceiptDTO[] }>(`/rentals/${props.rentalId}/payment-receipts`)).data;
+  } catch {
+    receipts.value = []; // a lista de pagamentos continua funcionando sem os comprovantes
+  }
+}
+
+async function markReviewed(receipt: PaymentReceiptDTO) {
+  reviewing.value = receipt.id;
+  try {
+    receipts.value = (
+      await api.post<{ data: PaymentReceiptDTO[] }>(`/rentals/${props.rentalId}/payment-receipts/${receipt.id}/review`, {})
+    ).data;
+    toasts.success('Comprovante marcado como conferido');
+  } catch (err) {
+    toasts.error('Não foi possível marcar o comprovante', err instanceof ApiRequestError ? err.message : undefined);
+  } finally {
+    reviewing.value = null;
+  }
+}
+
 async function confirmDelete() {
   if (!deleteTarget.value) return;
   deleting.value = true;
@@ -117,7 +147,10 @@ async function confirmDelete() {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  void loadReceipts();
+});
 </script>
 
 <template>
@@ -161,6 +194,44 @@ onMounted(load);
     <p v-else-if="view && !canWrite && auth.allows('finance', 'pay')" class="text-sm text-ink-muted">
       Esta locação não está ativa: não aceita novos pagamentos.
     </p>
+
+    <section v-if="receipts.length > 0" class="fo-card p-6" data-section="whatsapp-receipts">
+      <h2 class="text-xl font-bold text-ink">Comprovantes recebidos pelo WhatsApp</h2>
+      <p class="mt-1 text-sm text-ink-muted">
+        {{ pendingReceipts }} pendente(s) de conferência. Confira o comprovante e dê a baixa no pagamento correspondente.
+      </p>
+      <ul class="mt-4 divide-y divide-line">
+        <li v-for="receipt in receipts" :key="receipt.id" class="flex flex-wrap items-center gap-3 py-3">
+          <FileText class="size-5 shrink-0 text-ink-soft" aria-hidden="true" />
+          <div class="min-w-0 flex-1">
+            <a
+              v-if="receipt.file"
+              :href="receipt.file.url"
+              target="_blank"
+              rel="noopener"
+              class="font-semibold text-brand-600 hover:underline"
+            >
+              {{ receipt.file.contentType === 'application/pdf' ? 'Abrir PDF' : 'Ver imagem' }}
+            </a>
+            <span v-else class="font-semibold text-ink">Arquivo indisponível</span>
+            <span class="ml-2 text-sm text-ink-muted tabular">{{ formatDateTimeBR(receipt.receivedAt) }}</span>
+            <p v-if="receipt.caption" class="text-sm text-ink-soft">“{{ receipt.caption }}”</p>
+          </div>
+          <StatusBadge
+            :label="receipt.status === 'REVIEWED' ? 'Conferido' : 'Pendente'"
+            :tone="receipt.status === 'REVIEWED' ? 'blue' : 'amber'"
+          />
+          <AppButton
+            v-if="receipt.status === 'PENDING_REVIEW' && auth.allows('finance', 'pay')"
+            variant="secondary"
+            :loading="reviewing === receipt.id"
+            @click="markReviewed(receipt)"
+          >
+            Marcar como conferido
+          </AppButton>
+        </li>
+      </ul>
+    </section>
 
     <RentalPaymentForm
       v-if="formMode"

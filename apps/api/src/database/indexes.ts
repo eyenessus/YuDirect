@@ -412,4 +412,13 @@ export async function ensureIndexes(ctx: MongoContext): Promise<void> {
     { key: { eventId: 1 }, unique: true, name: 'uniq_event' },
     { key: { organizationId: 1, status: 1, receivedAt: -1 }, name: 'by_org_status' },
   ]);
+  // Pedido de manutenção aberto pelo WhatsApp: um por evento do Whaply.
+  await c.maintenanceRequests.createIndexes([
+    { key: { sourceEventId: 1 }, unique: true, partialFilterExpression: { sourceEventId: { $type: 'string' } }, name: 'uniq_source_event' },
+  ]);
+  await c.paymentReceipts.createIndexes([
+    { key: { eventId: 1 }, unique: true, name: 'uniq_event' },
+    { key: { organizationId: 1, rentalId: 1, createdAt: -1 }, name: 'by_rental' },
+    { key: { organizationId: 1, status: 1, createdAt: -1 }, name: 'by_org_status' },
+  ]);
 }

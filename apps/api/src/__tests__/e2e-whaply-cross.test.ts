@@ -415,6 +415,34 @@ describe.skipIf(!WHAPLY_DIR)('E2E YuDirect ⇄ Whaply (código real dos dois lad
     expect(after!.photos).toHaveLength(5);
   });
 
+  it('menu da locadora: chamado de manutenção com foto e comprovante em PDF chegam ao YuDirect', async () => {
+    const r = await newRental();
+    const rental = await harness.ctx.mongo.collections.rentals.findOne({ driverId: new ObjectId(r.driverId), status: 'ACTIVE' });
+    const photo = tinyPng(4242);
+    const pdf = Buffer.from('%PDF-1.7\n1 0 obj << >> endobj\n%%EOF\n');
+
+    // Whaply (ponte real): baixa a mídia da "Meta", guarda e grava os eventos; o outbox entrega por HTTP.
+    expect((await wh<{ media: number }>('/__test/locadora/maintenance', {
+      from: r.waPhone, part: 'freios', partLabel: '🛑 Freios / Pastilhas', description: 'Chiado ao frear', imagesBase64: [photo.toString('base64')],
+    })).media).toBe(1);
+    expect((await wh<{ mimeType: string }>('/__test/locadora/receipt', {
+      from: r.waPhone, fileBase64: pdf.toString('base64'), caption: 'semana 46',
+    })).mimeType).toBe('application/pdf');
+    await wh('/__test/tick', {});
+
+    const request = await harness.ctx.mongo.collections.maintenanceRequests.findOne({ driverId: new ObjectId(r.driverId) });
+    expect(request).toMatchObject({ category: 'MECHANICAL', status: 'OPEN', rentalId: rental!._id });
+    expect(request!.photoFileIds).toHaveLength(1);
+    const photoFile = await harness.ctx.mongo.collections.files.findOne({ _id: request!.photoFileIds[0] });
+    expect(photoFile).toMatchObject({ purpose: 'MAINTENANCE_REQUEST_PHOTO', contentType: 'image/png', size: photo.length });
+
+    const receipts = await api(cookie).get(`/api/v1/rentals/${rental!._id.toHexString()}/payment-receipts`);
+    expect(receipts.statusCode, receipts.body).toBe(200);
+    expect(receipts.json().data).toEqual([
+      expect.objectContaining({ status: 'PENDING_REVIEW', caption: 'semana 46', file: expect.objectContaining({ contentType: 'application/pdf' }) }),
+    ]);
+  });
+
   it('chave errada no YuDirect: o Whaply recusa (401) e nada é enviado', async () => {
     const wrong = await createHarness({
       WHAPLY_INTEGRATION_ENABLED: 'true',

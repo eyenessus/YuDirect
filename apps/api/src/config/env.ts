@@ -80,6 +80,12 @@ const envSchema = z.object({
   WHAPLY_TEMPLATE_LANGUAGE: z.string().default('pt_BR'),
   /** Intervalo dos jobs da integração (disparo, outbox, reconciliação). */
   WHAPLY_JOBS_INTERVAL_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
+  /**
+   * Locadora dona do canal Whaply. Eventos sem vistoria (manutenção, comprovante) vão para ela.
+   * Sem esta variável, vale a ÚNICA locadora com a coleta pelo WhatsApp ligada; se houver mais de
+   * uma, o evento não é associado a nenhuma (nunca cai na locadora errada).
+   */
+  WHAPLY_ORGANIZATION_ID: z.string().regex(/^[a-f0-9]{24}$/).optional(),
 
   EMAIL_PROVIDER: z.string().optional(),
   EMAIL_API_URL: z.string().optional(),

@@ -15,12 +15,43 @@ import {
   markEntryPaid,
   updateEntry,
 } from '../../services/rental-payments.js';
+import { listRentalReceipts, markReceiptReviewed } from '../../services/whatsapp-locadora.js';
 
 /**
  * Aba "Pagamentos" da página da locação.
  * Cada mutação devolve a visão completa (cartões + lista) já atualizada.
  */
 export async function registerRentalPaymentRoutes(app: FastifyInstance): Promise<void> {
+  /* Comprovantes enviados pelo motorista no WhatsApp (pendentes de conferência). */
+  app.get(
+    '/rentals/:id/payment-receipts',
+    { onRequest: [app.requireAuth, app.requirePermission('finance', 'read')] },
+    async (request) => {
+      const ctx = request.appCtx;
+      const { organizationId } = requireAuthContext(request);
+      const rental = await loadRental(ctx, organizationId, toObjectId((request.params as { id: string }).id));
+      return { data: await listRentalReceipts(ctx, organizationId, rental._id) };
+    },
+  );
+
+  app.post(
+    '/rentals/:id/payment-receipts/:receiptId/review',
+    { onRequest: [app.requireAuth, app.requirePermission('finance', 'pay')] },
+    async (request) => {
+      const ctx = request.appCtx;
+      const auth = requireAuthContext(request);
+      const params = request.params as { id: string; receiptId: string };
+      const rental = await loadRental(ctx, auth.organizationId, toObjectId(params.id));
+      await markReceiptReviewed(ctx, {
+        organizationId: auth.organizationId,
+        rentalId: rental._id,
+        receiptId: toObjectId(params.receiptId),
+        actorId: auth.userId,
+      });
+      return { data: await listRentalReceipts(ctx, auth.organizationId, rental._id) };
+    },
+  );
+
   app.get(
     '/rentals/:id/payments',
     { onRequest: [app.requireAuth, app.requirePermission('finance', 'read')] },

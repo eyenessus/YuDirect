@@ -33,6 +33,7 @@ import { audit } from './common.js';
 import { storeFile } from './files.js';
 import { createNotification } from './notifications.js';
 import { sha256Hex } from '../integrations/whaply/signing.js';
+import { handleMaintenanceRequested, handleReceiptReceived } from './whatsapp-locadora.js';
 
 export class PermanentEventError extends Error {}
 
@@ -1030,6 +1031,11 @@ async function processEvent(ctx: AppContext, envelope: WhaplyEventEnvelope): Pro
       return handleUnmatchedMedia(ctx, envelope, parsed.data as z_MediaData & { reason: string });
     case 'template.status_changed':
       return handleTemplateStatus(ctx, envelope, parsed.data as { name: string; status: string; category?: string | null; reason?: string | null });
+    // Menu da locadora no WhatsApp (fora da vistoria): services/whatsapp-locadora.ts
+    case 'maintenance.requested':
+      return handleMaintenanceRequested(ctx, envelope, parsed.data as Parameters<typeof handleMaintenanceRequested>[2]);
+    case 'payment.receipt_received':
+      return handleReceiptReceived(ctx, envelope, parsed.data as Parameters<typeof handleReceiptReceived>[2]);
     default:
       return 'ignored';
   }

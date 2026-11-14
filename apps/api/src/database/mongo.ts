@@ -37,6 +37,7 @@ import type {
   JobLeaseDoc,
   MessagingRateDoc,
   UnmatchedMediaDoc,
+  PaymentReceiptDoc,
   TrafficFineDoc,
   ClaimDoc,
   FuelLogDoc,
@@ -114,6 +115,7 @@ export interface Collections {
   jobLeases: Collection<JobLeaseDoc>;
   messagingRates: Collection<MessagingRateDoc>;
   unmatchedMedia: Collection<UnmatchedMediaDoc>;
+  paymentReceipts: Collection<PaymentReceiptDoc>;
 }
 
 export interface MongoContext {
@@ -181,6 +183,7 @@ function buildCollections(db: Db): Collections {
     jobLeases: db.collection<JobLeaseDoc>('jobLeases'),
     messagingRates: db.collection<MessagingRateDoc>('messagingRates'),
     unmatchedMedia: db.collection<UnmatchedMediaDoc>('unmatchedMedia'),
+    paymentReceipts: db.collection<PaymentReceiptDoc>('paymentReceipts'),
   };
 }
 

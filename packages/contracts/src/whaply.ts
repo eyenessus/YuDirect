@@ -288,6 +288,30 @@ const mediaEventData = z.object({
   receivedAt: isoDateTimeSchema.optional(),
 });
 
+/** Mídia enviada fora de uma coleta (manutenção, comprovante): referência temporária no Whaply. */
+const channelMediaData = z.object({
+  mediaRef: z.string().min(16).max(200),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  mimeType: z.string().max(100),
+  size: z.number().int().min(1).max(20 * 1024 * 1024),
+  wamid: z.string().max(200),
+});
+
+/** Comprovante de pagamento recebido pelo WhatsApp (aba Pagamentos da locação). */
+export interface PaymentReceiptDTO {
+  id: string;
+  source: 'WHATSAPP';
+  status: 'PENDING_REVIEW' | 'REVIEWED';
+  caption: string | null;
+  senderPhone: string;
+  file: { url: string; name: string; contentType: string } | null;
+  receivedAt: string;
+  reviewedAt: string | null;
+}
+
+/** Peças da lista de manutenção do WhatsApp (estado VehicleMaintenance do Whaply). */
+export const whatsappMaintenanceParts = ['freios', 'motor', 'pneus', 'eletrica', 'outro'] as const;
+
 export const whaplyEventTypes = [
   'message.accepted',
   'message.deferred',
@@ -303,6 +327,8 @@ export const whaplyEventTypes = [
   'session.opted_out',
   'media.unmatched',
   'template.status_changed',
+  'maintenance.requested',
+  'payment.receipt_received',
 ] as const;
 export type WhaplyEventType = (typeof whaplyEventTypes)[number];
 
@@ -344,6 +370,19 @@ export const whaplyEventDataSchemas = {
     status: z.string().max(40),
     category: z.string().max(40).nullable().optional(),
     reason: z.string().max(500).nullable().optional(),
+  }),
+  /** Chamado aberto pelo motorista no menu Manutenção do WhatsApp. */
+  'maintenance.requested': z.object({
+    contactPhoneE164: z.string().regex(/^\+[1-9]\d{9,14}$/),
+    part: z.enum(whatsappMaintenanceParts),
+    partLabel: z.string().max(80),
+    description: z.string().min(1).max(1000),
+    media: z.array(channelMediaData).max(5),
+  }),
+  /** Comprovante de pagamento (foto ou PDF) enviado no menu Financeiro do WhatsApp. */
+  'payment.receipt_received': channelMediaData.extend({
+    contactPhoneE164: z.string().regex(/^\+[1-9]\d{9,14}$/),
+    caption: z.string().max(500).optional(),
   }),
 } as const;
 
