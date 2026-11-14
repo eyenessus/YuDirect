@@ -1214,7 +1214,10 @@ async function updateWithEvidence(
 async function handleMediaReceived(ctx: AppContext, envelope: WhaplyEventEnvelope, data: z_MediaData): Promise<IngestOutcome> {
   const inspection = await loadInspectionForEvent(ctx, envelope);
   if (!inspection) return 'ignored';
-  if ((inspection.photoEvidence ?? []).some((e) => e.wamid === data.wamid)) return 'processed';
+  if ((inspection.photoEvidence ?? []).some((e) => e.wamid === data.wamid)) {
+    await completeIfSessionAlreadyClosed(ctx, envelope);
+    return 'processed';
+  }
 
   const media = await ctx.integrations.whaply.fetchMedia(data.mediaRef);
   if (!media.ok) {
@@ -1302,6 +1305,7 @@ async function handleMediaReceived(ctx: AppContext, envelope: WhaplyEventEnvelop
       dedupeKey: `wa-late:${data.wamid}`,
     });
   }
+  await completeIfSessionAlreadyClosed(ctx, envelope);
   return 'processed';
 }
 
@@ -1337,7 +1341,25 @@ async function handleTextReceived(
       $inc: { version: 1 },
     },
   );
+  await completeIfSessionAlreadyClosed(ctx, envelope);
   return 'processed';
+}
+
+/**
+ * A entrega é pelo-menos-uma-vez e uma nova tentativa pode chegar DEPOIS
+ * de eventos posteriores: a conclusão da coleta passa na frente da foto
+ * (ou da quilometragem) que falhou na primeira entrega. Nesse caso a
+ * conclusão foi registrada como incompleta; quando o item atrasado chega,
+ * ela é reavaliada — senão a vistoria ficaria pendente com tudo recebido.
+ */
+async function completeIfSessionAlreadyClosed(ctx: AppContext, envelope: WhaplyEventEnvelope): Promise<void> {
+  if (!envelope.sessionId) return;
+  const closed = await ctx.mongo.collections.integrationInbox.findOne({
+    type: 'session.completed',
+    'payload.sessionId': envelope.sessionId,
+    processedAt: { $ne: null },
+  });
+  if (closed) await handleSessionCompleted(ctx, closed.payload as WhaplyEventEnvelope);
 }
 
 export function isCollectionComplete(doc: InspectionDoc): boolean {
@@ -1511,6 +1533,25 @@ async function handleOptOut(ctx: AppContext, envelope: WhaplyEventEnvelope): Pro
   return 'processed';
 }
 
+/**
+ * Locadora dona de uma foto "sem vínculo". O Whaply não informa a vistoria
+ * (para a foto nunca ser associada sozinha), mas informa a coleta de origem
+ * (`sessionId`/`correlationId`): é por ela que se chega à organização.
+ * Sem origem identificável, a foto só vai para a locadora quando existe UMA
+ * na instalação — escolher uma entre várias entregaria a foto do cliente de
+ * uma locadora a outra.
+ */
+async function organizationForUnmatched(ctx: AppContext, envelope: WhaplyEventEnvelope): Promise<OrganizationDoc | null> {
+  const c = ctx.mongo.collections;
+  const origin =
+    (await loadInspectionForEvent(ctx, envelope)) ??
+    (envelope.sessionId ? await c.inspections.findOne({ 'collection.sessionId': envelope.sessionId }) : null) ??
+    (envelope.correlationId ? await c.inspections.findOne({ 'collection.correlationId': envelope.correlationId }) : null);
+  if (origin) return c.organizations.findOne({ _id: origin.organizationId });
+  const candidates = await c.organizations.find({}).limit(2).toArray();
+  return candidates.length === 1 ? candidates[0]! : null;
+}
+
 async function handleUnmatchedMedia(
   ctx: AppContext,
   envelope: WhaplyEventEnvelope,
@@ -1518,10 +1559,7 @@ async function handleUnmatchedMedia(
 ): Promise<IngestOutcome> {
   const c = ctx.mongo.collections;
   if (await c.unmatchedMedia.findOne({ eventId: envelope.eventId })) return 'processed';
-  const inspection = await loadInspectionForEvent(ctx, envelope);
-  const organization = inspection
-    ? await c.organizations.findOne({ _id: inspection.organizationId })
-    : await c.organizations.findOne({}, { sort: { createdAt: 1 } });
+  const organization = await organizationForUnmatched(ctx, envelope);
   if (!organization) return 'ignored';
 
   const media = await ctx.integrations.whaply.fetchMedia(data.mediaRef);
