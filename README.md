@@ -355,6 +355,8 @@ de quebrar.
 | [`docs/TRACEABILITY.md`](docs/TRACEABILITY.md) | Matriz das 93 capturas + 2 páginas de PDF → rota, componente, endpoint e teste |
 | [`docs/VISUAL-VERIFICATION.md`](docs/VISUAL-VERIFICATION.md) | O que foi medido, com que método, e as divergências que permanecem |
 | [`docs/openapi.json`](docs/openapi.json) | Contrato da API (OpenAPI 3.1); também em `GET /api/v1/openapi.json` |
+| [`docs/architecture/yudirect-whaply-vistoria-plan.md`](docs/architecture/yudirect-whaply-vistoria-plan.md) | Plano da vistoria por WhatsApp com o Whaply: arquitetura, contrato v1 (HMAC, outbox/inbox), segurança e fases |
+| [`docs/architecture/whatsapp-locadora-flow.md`](docs/architecture/whatsapp-locadora-flow.md) | O que foi feito em 14–15/11/2026: canal das fotos por locadora (mensagens ou formulário), manutenção e comprovante pelo WhatsApp, ativação em produção e pendências |
 
 ---
 
