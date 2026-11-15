@@ -427,7 +427,7 @@ describe.skipIf(!WHAPLY_DIR)('E2E YuDirect ⇄ Whaply (código real dos dois lad
 
       // O Whaply enviou o template do formulário: um botão de Flow (sem resposta rápida e sem link).
       const tpl = (await metaSent()).filter((s) => s.body.to === r.waPhone && s.body.type === 'template').at(-1)!;
-      expect(tpl.body.template.name).toBe('yudirect_vistoria_solicitacao_flow');
+      expect(tpl.body.template.name).toBe('yudirect_vistoria_solicitacao_flow_v2');
       const buttons = (tpl.body.template.components as Array<Record<string, any>>).filter((c) => c.type === 'button');
       expect(buttons.map((b) => b.sub_type)).toEqual(['flow']);
       const token = buttons[0].parameters[0].action.flow_token as string;

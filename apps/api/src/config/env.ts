@@ -78,7 +78,7 @@ const envSchema = z.object({
   WHAPLY_TEMPLATE_REMINDER: z.string().default('yudirect_vistoria_lembrete'),
   WHAPLY_TEMPLATE_CORRECTION: z.string().default('yudirect_vistoria_correcao'),
   /** Templates com botão de formulário (canal FLOW); sem botão de link. */
-  WHAPLY_TEMPLATE_REQUEST_FLOW: z.string().default('yudirect_vistoria_solicitacao_flow'),
+  WHAPLY_TEMPLATE_REQUEST_FLOW: z.string().default('yudirect_vistoria_solicitacao_flow_v2'),
   WHAPLY_TEMPLATE_REMINDER_FLOW: z.string().default('yudirect_vistoria_lembrete_flow'),
   WHAPLY_TEMPLATE_CORRECTION_FLOW: z.string().default('yudirect_vistoria_correcao_flow'),
   WHAPLY_TEMPLATE_LANGUAGE: z.string().default('pt_BR'),

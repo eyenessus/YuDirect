@@ -95,7 +95,7 @@ describe('canal das fotos: formulário (FLOW) por locadora', () => {
     await settings('FLOW');
     res = await req(cookie).get('/api/v1/inspection/whatsapp-settings');
     expect(res.json().settings.photoChannel).toBe('FLOW');
-    expect(res.json().templates).toMatchObject({ request: 'yudirect_vistoria_solicitacao_flow', reminder: 'yudirect_vistoria_lembrete_flow' });
+    expect(res.json().templates).toMatchObject({ request: 'yudirect_vistoria_solicitacao_flow_v2', reminder: 'yudirect_vistoria_lembrete_flow' });
   });
 
   it('FLOW: pede o template do formulário, sem botão de link, com collectionMode FLOW', async () => {
@@ -106,8 +106,10 @@ describe('canal das fotos: formulário (FLOW) por locadora', () => {
 
     const body = await sentBody(id);
     expect(body.collectionMode).toBe('FLOW');
-    expect(body.template.name).toBe('yudirect_vistoria_solicitacao_flow');
+    expect(body.template.name).toBe('yudirect_vistoria_solicitacao_flow_v2');
     expect(body.template.urlButtonParam).toBeNull();
+    // O texto do template cita os ângulos (não só o número): o cliente sabe de quê é cada foto.
+    expect(body.template.bodyParams[3]).toBe('frente, traseira, lateral esquerda, lateral direita e painel');
     expect(body.session?.steps.map((s) => s.type)).toContain('NUMBER'); // KM continua sendo pedida
   });
 

@@ -103,6 +103,14 @@ export function formatDateTimeLocal(instant: Date, timeZone = TIMEZONE): string 
   }).format(instant);
 }
 
+/** "frente, traseira, lateral esquerda, lateral direita e painel" (nomes dos ângulos em minúsculas). */
+export function listAngles(labels: string[]): string {
+  // 'Painel / KM' vira 'painel': a quilometragem é pedida à parte, no fim.
+  const names = labels.map((l) => l.split('/')[0]!.trim().toLowerCase()).filter(Boolean);
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} e ${names[names.length - 1]}`;
+}
+
 function formatDateBR(iso: string): string {
   const [y, m, d] = iso.slice(0, 10).split('-');
   return `${d}/${m}/${y}`;
@@ -360,8 +368,12 @@ export async function createMessageIntent(
 
   if (params.kind === 'INSPECTION_REQUEST') {
     templateName = flow ? ctx.env.WHAPLY_TEMPLATE_REQUEST_FLOW : ctx.env.WHAPLY_TEMPLATE_REQUEST;
-    const photoCount = collection.requiredSlots.length;
-    bodyParams = [firstName, plate, formatDateBR(inspection.scheduledAt), String(photoCount), deadline];
+    // Mensagem por chat: "Precisamos de {{4}} fotos" (número). Formulário: "Precisamos destas fotos do
+    // veículo: {{4}}" (lista dos ângulos da locadora, para o cliente saber de quê é cada foto).
+    const photosParam = flow
+      ? listAngles(collection.requiredSlots.map((s) => s.label))
+      : String(collection.requiredSlots.length);
+    bodyParams = [firstName, plate, formatDateBR(inspection.scheduledAt), photosParam, deadline];
     session = {
       round: collection.round,
       expiresAt: expiresAt.toISOString(),
