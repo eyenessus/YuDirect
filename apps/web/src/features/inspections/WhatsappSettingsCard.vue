@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { MessageCircle } from 'lucide-vue-next';
-import type { InspectionWhatsappSettings } from '@yudirect/contracts';
+import {
+  whatsappPhotoChannelLabels,
+  whatsappPhotoChannels,
+  type InspectionWhatsappSettings,
+} from '@yudirect/contracts';
 import AppButton from '@/components/ui/AppButton.vue';
 import AppCheckbox from '@/components/ui/AppCheckbox.vue';
 import AppInput from '@/components/ui/AppInput.vue';
+import AppSelect, { type SelectOption } from '@/components/ui/AppSelect.vue';
 import FormField from '@/components/ui/FormField.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
 import { api, ApiRequestError } from '@/lib/api';
@@ -27,6 +32,7 @@ const toasts = useToastStore();
 const data = ref<SettingsResponse | null>(null);
 const form = ref<InspectionWhatsappSettings | null>(null);
 const saving = ref(false);
+const photoChannelOptions: SelectOption[] = whatsappPhotoChannels.map((value) => ({ value, label: whatsappPhotoChannelLabels[value] }));
 
 async function load() {
   try {
@@ -86,6 +92,19 @@ onMounted(load);
         description="Vale para novas vistorias de motoristas com consentimento registrado."
         boxed
       />
+      <FormField
+        v-slot="field"
+        label="Como o motorista envia as fotos"
+        hint="Formulário: uma tela por ângulo dentro do WhatsApp. Vale para as vistorias agendadas a partir de agora."
+      >
+        <AppSelect
+          :id="field.id"
+          :model-value="form.photoChannel"
+          :options="photoChannelOptions"
+          :disabled="!auth.allows('inspections', 'update')"
+          @update:model-value="form.photoChannel = ($event as InspectionWhatsappSettings['photoChannel'])"
+        />
+      </FormField>
       <div class="grid gap-5 md:grid-cols-4">
         <FormField v-slot="field" label="Horário do disparo" hint="Fuso de Brasília">
           <AppInput :id="field.id" v-model="form.sendTime" type="time" :disabled="!auth.allows('inspections', 'update')" />

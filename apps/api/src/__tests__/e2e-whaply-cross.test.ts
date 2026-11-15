@@ -129,7 +129,8 @@ describe.skipIf(!WHAPLY_DIR)('E2E YuDirect ⇄ Whaply (código real dos dois lad
   const messages = (id: string) => harness.ctx.mongo.collections.whatsappMessages.find({ inspectionId: new ObjectId(id) }).toArray();
 
   beforeAll(async () => {
-    const port = 5100 + Math.floor(Math.random() * 800);
+    // Porta fixa opcional (WHAPLY_E2E_PORT / YUDIRECT_E2E_PORT) para maquinas com faixas de porta reservadas.
+    const port = Number(process.env.WHAPLY_E2E_PORT) || 5100 + Math.floor(Math.random() * 800);
     whaplyUrl = `http://127.0.0.1:${port}`;
     child = spawn(process.execPath, ['-r', 'ts-node/register/transpile-only', 'tests/e2e-harness/YuDirectPartnerHarness.ts'], {
       cwd: WHAPLY_DIR,
@@ -170,7 +171,7 @@ describe.skipIf(!WHAPLY_DIR)('E2E YuDirect ⇄ Whaply (código real dos dois lad
       WHAPLY_REQUEST_TIMEOUT_MS: '8000',
     });
     // O Whaply chama a rota pública do YuDirect por HTTP real.
-    await harness.app.listen({ port: 0, host: '127.0.0.1' });
+    await harness.app.listen({ port: Number(process.env.YUDIRECT_E2E_PORT) || 0, host: '127.0.0.1' });
     const ydPort = (harness.app.server.address() as AddressInfo).port;
     await wh('/__test/configure', { callbackUrl: `http://127.0.0.1:${ydPort}/api/v1/integrations/whaply/events` });
 
@@ -412,6 +413,78 @@ describe.skipIf(!WHAPLY_DIR)('E2E YuDirect ⇄ Whaply (código real dos dois lad
     expect(newFront.fileId.equals(oldFront.fileId)).toBe(false);
     expect(after!.photoEvidence!.find((e) => e.fileId.equals(oldFront.fileId))?.supersededAt).toBeTruthy();
     expect(after!.photos).toHaveLength(5);
+  });
+
+  it('vistoria pelo formulário (FLOW): template com botão de formulário → telas → fotos cifradas → KM → aguardando aprovação', async () => {
+    const setChannel = (photoChannel: 'CHAT' | 'FLOW') =>
+      api(cookie).put('/api/v1/inspection/whatsapp-settings', {
+        enabled: true, sendTime: '09:00', reminderAfterHours: 24, maxReminders: 1, collectionTtlHours: 72, instructions: {}, photoChannel,
+      });
+    expect((await setChannel('FLOW')).statusCode).toBe(200);
+    try {
+      const r = await newRental();
+      await cycle();
+
+      // O Whaply enviou o template do formulário: um botão de Flow (sem resposta rápida e sem link).
+      const tpl = (await metaSent()).filter((s) => s.body.to === r.waPhone && s.body.type === 'template').at(-1)!;
+      expect(tpl.body.template.name).toBe('yudirect_vistoria_solicitacao_flow_v2');
+      const buttons = (tpl.body.template.components as Array<Record<string, any>>).filter((c) => c.type === 'button');
+      expect(buttons.map((b) => b.sub_type)).toEqual(['flow']);
+      const token = buttons[0].parameters[0].action.flow_token as string;
+
+      // O cliente abre o formulário e envia uma foto por tela.
+      expect((await wh<{ screen: string }>('/__test/flow/init', { token })).screen).toBe('VISTORIA_INICIO');
+      let screen = await wh<{ screen: string; data: { slot: string } }>('/__test/flow/start', { token });
+      const hashes: string[] = [];
+      for (let position = 0; screen.screen.startsWith('VISTORIA_FOTO_'); position += 1) {
+        const img = tinyPng(7000 + position);
+        hashes.push(createHash('sha256').update(img).digest('hex'));
+        screen = await wh('/__test/flow/photo', { token, position, slot: screen.data.slot, imageBase64: img.toString('base64') });
+      }
+      expect(hashes).toHaveLength(SLOTS.length);
+      expect(screen).toMatchObject({ screen: 'VISTORIA_KM', data: { slot: 'ODOMETER' } });
+      expect((await wh<{ screen: string }>('/__test/flow/km', { token, slot: 'ODOMETER', km: '61.050' })).screen).toBe('VISTORIA_FIM');
+      await wh('/__test/tick', {});
+
+      const done = await inspection(r.inspectionId);
+      if (done?.status !== 'SUBMITTED') await diagnose(r.inspectionId);
+      expect(done?.status).toBe('SUBMITTED'); // aguardando revisão humana
+      expect(done?.collection).toMatchObject({ status: 'COMPLETE', photoChannel: 'FLOW' });
+      expect(done?.odometerKm).toBe(61050);
+      const evidence = (done?.photoEvidence ?? []).filter((e) => e.source === 'WHATSAPP' && !e.late);
+      expect(evidence.map((e) => e.slotCode)).toEqual(SLOTS);
+      expect(evidence.map((e) => e.sha256)).toEqual(hashes); // bytes íntegros depois de cifrar/decifrar
+    } finally {
+      await setChannel('CHAT');
+    }
+  });
+
+  it('menu da locadora: chamado de manutenção com foto e comprovante em PDF chegam ao YuDirect', async () => {
+    const r = await newRental();
+    const rental = await harness.ctx.mongo.collections.rentals.findOne({ driverId: new ObjectId(r.driverId), status: 'ACTIVE' });
+    const photo = tinyPng(4242);
+    const pdf = Buffer.from('%PDF-1.7\n1 0 obj << >> endobj\n%%EOF\n');
+
+    // Whaply (ponte real): baixa a mídia da "Meta", guarda e grava os eventos; o outbox entrega por HTTP.
+    expect((await wh<{ media: number }>('/__test/locadora/maintenance', {
+      from: r.waPhone, part: 'freios', partLabel: '🛑 Freios / Pastilhas', description: 'Chiado ao frear', imagesBase64: [photo.toString('base64')],
+    })).media).toBe(1);
+    expect((await wh<{ mimeType: string }>('/__test/locadora/receipt', {
+      from: r.waPhone, fileBase64: pdf.toString('base64'), caption: 'semana 46',
+    })).mimeType).toBe('application/pdf');
+    await wh('/__test/tick', {});
+
+    const request = await harness.ctx.mongo.collections.maintenanceRequests.findOne({ driverId: new ObjectId(r.driverId) });
+    expect(request).toMatchObject({ category: 'MECHANICAL', status: 'OPEN', rentalId: rental!._id });
+    expect(request!.photoFileIds).toHaveLength(1);
+    const photoFile = await harness.ctx.mongo.collections.files.findOne({ _id: request!.photoFileIds[0] });
+    expect(photoFile).toMatchObject({ purpose: 'MAINTENANCE_REQUEST_PHOTO', contentType: 'image/png', size: photo.length });
+
+    const receipts = await api(cookie).get(`/api/v1/rentals/${rental!._id.toHexString()}/payment-receipts`);
+    expect(receipts.statusCode, receipts.body).toBe(200);
+    expect(receipts.json().data).toEqual([
+      expect.objectContaining({ status: 'PENDING_REVIEW', caption: 'semana 46', file: expect.objectContaining({ contentType: 'application/pdf' }) }),
+    ]);
   });
 
   it('chave errada no YuDirect: o Whaply recusa (401) e nada é enviado', async () => {

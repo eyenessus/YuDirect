@@ -32,6 +32,7 @@ import type {
   FilePurpose,
   CollectionMode,
   CollectionStatus,
+  WhatsappPhotoChannel,
   ConsentSource,
   ErrorSource,
   MessageKind,
@@ -391,6 +392,8 @@ export interface InspectionDoc extends Tenant {
 
 export interface InspectionCollection {
   mode: CollectionMode;
+  /** Canal das fotos fixado ao planejar a coleta (mudar a configuração não afeta coleta em andamento). */
+  photoChannel?: WhatsappPhotoChannel;
   status: CollectionStatus;
   /** Snapshot dos ângulos exigidos na rodada atual (ordem da coleta). */
   requiredSlots: Array<{ code: string; label: string; order: number; instruction: string | null }>;
@@ -518,6 +521,27 @@ export interface UnmatchedMediaDoc extends Tenant {
   resolvedAt: Date | null;
   assignedInspectionId: ObjectId | null;
   assignedSlotCode: string | null;
+}
+
+/**
+ * Comprovante de pagamento enviado pelo motorista (hoje: menu Financeiro do WhatsApp, via Whaply).
+ * Não dá baixa sozinho: o dono confere e dá a baixa manual na aba Pagamentos, como antes.
+ */
+export interface PaymentReceiptDoc extends Tenant {
+  driverId: ObjectId | null;
+  rentalId: ObjectId | null;
+  fileId: ObjectId;
+  source: 'WHATSAPP';
+  /** Evento do Whaply que trouxe o comprovante (idempotência). */
+  eventId: string;
+  wamid: string;
+  sha256: string;
+  caption: string | null;
+  /** Telefone que enviou (E.164), mantido quando o motorista não foi encontrado. */
+  senderPhone: string;
+  status: 'PENDING_REVIEW' | 'REVIEWED';
+  reviewedBy: ObjectId | null;
+  reviewedAt: Date | null;
 }
 
 export interface BankAccountDoc extends Tenant {
@@ -711,6 +735,8 @@ export interface MaintenanceRequestDoc extends Tenant {
   status: MaintenanceRequestStatus;
   responseNote: string | null;
   handledBy: ObjectId | null;
+  /** Evento do Whaply que abriu o pedido (menu Manutenção do WhatsApp); idempotência do reprocessamento. */
+  sourceEventId?: string | null;
 }
 
 export interface RentalLeadDoc extends Tenant {

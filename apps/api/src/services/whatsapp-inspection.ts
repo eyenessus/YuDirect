@@ -15,6 +15,7 @@ import {
   type MessageStatus,
   type WhaplyEventEnvelope,
   type WhaplyMessageRequest,
+  type WhatsappPhotoChannel,
 } from '@yudirect/contracts';
 import type { AppContext } from '../context.js';
 import type {
@@ -33,6 +34,7 @@ import { audit } from './common.js';
 import { storeFile } from './files.js';
 import { createNotification } from './notifications.js';
 import { sha256Hex } from '../integrations/whaply/signing.js';
+import { handleMaintenanceRequested, handleReceiptReceived } from './whatsapp-locadora.js';
 
 export class PermanentEventError extends Error {}
 
@@ -99,6 +101,14 @@ export function formatDateTimeLocal(instant: Date, timeZone = TIMEZONE): string 
     hour: '2-digit',
     minute: '2-digit',
   }).format(instant);
+}
+
+/** "frente, traseira, lateral esquerda, lateral direita e painel" (nomes dos ângulos em minúsculas). */
+export function listAngles(labels: string[]): string {
+  // 'Painel / KM' vira 'painel': a quilometragem é pedida à parte, no fim.
+  const names = labels.map((l) => l.split('/')[0]!.trim().toLowerCase()).filter(Boolean);
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} e ${names[names.length - 1]}`;
 }
 
 function formatDateBR(iso: string): string {
@@ -247,9 +257,11 @@ export function newCollection(
   plan: CollectionPlan,
   requiredSlots: InspectionCollection['requiredSlots'],
   round = 0,
+  photoChannel: WhatsappPhotoChannel = 'CHAT',
 ): InspectionCollection {
   return {
     mode: plan.guided ? 'WHATSAPP' : 'WEB_LINK',
+    photoChannel,
     status: plan.status,
     requiredSlots,
     requireOdometer: true,
@@ -351,11 +363,17 @@ export async function createMessageIntent(
   let templateName: string;
   let bodyParams: string[];
   let session: WhaplyMessageRequest['session'] = null;
+  // Canal fixado ao planejar a coleta: FLOW usa os templates com botão de formulário (sem link).
+  const flow = (collection.photoChannel ?? 'CHAT') === 'FLOW';
 
   if (params.kind === 'INSPECTION_REQUEST') {
-    templateName = ctx.env.WHAPLY_TEMPLATE_REQUEST;
-    const photoCount = collection.requiredSlots.length;
-    bodyParams = [firstName, plate, formatDateBR(inspection.scheduledAt), String(photoCount), deadline];
+    templateName = flow ? ctx.env.WHAPLY_TEMPLATE_REQUEST_FLOW : ctx.env.WHAPLY_TEMPLATE_REQUEST;
+    // Mensagem por chat: "Precisamos de {{4}} fotos" (número). Formulário: "Precisamos destas fotos do
+    // veículo: {{4}}" (lista dos ângulos da locadora, para o cliente saber de quê é cada foto).
+    const photosParam = flow
+      ? listAngles(collection.requiredSlots.map((s) => s.label))
+      : String(collection.requiredSlots.length);
+    bodyParams = [firstName, plate, formatDateBR(inspection.scheduledAt), photosParam, deadline];
     session = {
       round: collection.round,
       expiresAt: expiresAt.toISOString(),
@@ -372,14 +390,14 @@ export async function createMessageIntent(
       ],
     };
   } else if (params.kind === 'REMINDER') {
-    templateName = ctx.env.WHAPLY_TEMPLATE_REMINDER;
+    templateName = flow ? ctx.env.WHAPLY_TEMPLATE_REMINDER_FLOW : ctx.env.WHAPLY_TEMPLATE_REMINDER;
     const ttlEnd = collection.requestedAt
       ? new Date(collection.requestedAt.getTime() + settings.collectionTtlHours * 3600 * 1000)
       : expiresAt;
     bodyParams = [firstName, plate, formatDateTimeLocal(ttlEnd)];
   } else {
     if (!params.correction) throw badRequest('Correção sem ângulos informados.');
-    templateName = ctx.env.WHAPLY_TEMPLATE_CORRECTION;
+    templateName = flow ? ctx.env.WHAPLY_TEMPLATE_CORRECTION_FLOW : ctx.env.WHAPLY_TEMPLATE_CORRECTION;
     bodyParams = [
       firstName,
       plate,
@@ -418,9 +436,11 @@ export async function createMessageIntent(
       name: templateName,
       language: ctx.env.WHAPLY_TEMPLATE_LANGUAGE,
       bodyParams,
-      urlButtonParam: token,
+      // O template do formulário não tem botão de link (decisão de 14/11/2026).
+      urlButtonParam: flow ? null : token,
     },
     session,
+    ...(flow ? { collectionMode: 'FLOW' as const } : {}),
   };
   const body = JSON.stringify(request);
   const now = new Date();
@@ -1030,6 +1050,11 @@ async function processEvent(ctx: AppContext, envelope: WhaplyEventEnvelope): Pro
       return handleUnmatchedMedia(ctx, envelope, parsed.data as z_MediaData & { reason: string });
     case 'template.status_changed':
       return handleTemplateStatus(ctx, envelope, parsed.data as { name: string; status: string; category?: string | null; reason?: string | null });
+    // Menu da locadora no WhatsApp (fora da vistoria): services/whatsapp-locadora.ts
+    case 'maintenance.requested':
+      return handleMaintenanceRequested(ctx, envelope, parsed.data as Parameters<typeof handleMaintenanceRequested>[2]);
+    case 'payment.receipt_received':
+      return handleReceiptReceived(ctx, envelope, parsed.data as Parameters<typeof handleReceiptReceived>[2]);
     default:
       return 'ignored';
   }
@@ -1214,7 +1239,10 @@ async function updateWithEvidence(
 async function handleMediaReceived(ctx: AppContext, envelope: WhaplyEventEnvelope, data: z_MediaData): Promise<IngestOutcome> {
   const inspection = await loadInspectionForEvent(ctx, envelope);
   if (!inspection) return 'ignored';
-  if ((inspection.photoEvidence ?? []).some((e) => e.wamid === data.wamid)) return 'processed';
+  if ((inspection.photoEvidence ?? []).some((e) => e.wamid === data.wamid)) {
+    await completeIfSessionAlreadyClosed(ctx, envelope);
+    return 'processed';
+  }
 
   const media = await ctx.integrations.whaply.fetchMedia(data.mediaRef);
   if (!media.ok) {
@@ -1302,6 +1330,7 @@ async function handleMediaReceived(ctx: AppContext, envelope: WhaplyEventEnvelop
       dedupeKey: `wa-late:${data.wamid}`,
     });
   }
+  await completeIfSessionAlreadyClosed(ctx, envelope);
   return 'processed';
 }
 
@@ -1337,7 +1366,25 @@ async function handleTextReceived(
       $inc: { version: 1 },
     },
   );
+  await completeIfSessionAlreadyClosed(ctx, envelope);
   return 'processed';
+}
+
+/**
+ * A entrega é pelo-menos-uma-vez e uma nova tentativa pode chegar DEPOIS
+ * de eventos posteriores: a conclusão da coleta passa na frente da foto
+ * (ou da quilometragem) que falhou na primeira entrega. Nesse caso a
+ * conclusão foi registrada como incompleta; quando o item atrasado chega,
+ * ela é reavaliada — senão a vistoria ficaria pendente com tudo recebido.
+ */
+async function completeIfSessionAlreadyClosed(ctx: AppContext, envelope: WhaplyEventEnvelope): Promise<void> {
+  if (!envelope.sessionId) return;
+  const closed = await ctx.mongo.collections.integrationInbox.findOne({
+    type: 'session.completed',
+    'payload.sessionId': envelope.sessionId,
+    processedAt: { $ne: null },
+  });
+  if (closed) await handleSessionCompleted(ctx, closed.payload as WhaplyEventEnvelope);
 }
 
 export function isCollectionComplete(doc: InspectionDoc): boolean {
@@ -1511,6 +1558,25 @@ async function handleOptOut(ctx: AppContext, envelope: WhaplyEventEnvelope): Pro
   return 'processed';
 }
 
+/**
+ * Locadora dona de uma foto "sem vínculo". O Whaply não informa a vistoria
+ * (para a foto nunca ser associada sozinha), mas informa a coleta de origem
+ * (`sessionId`/`correlationId`): é por ela que se chega à organização.
+ * Sem origem identificável, a foto só vai para a locadora quando existe UMA
+ * na instalação — escolher uma entre várias entregaria a foto do cliente de
+ * uma locadora a outra.
+ */
+async function organizationForUnmatched(ctx: AppContext, envelope: WhaplyEventEnvelope): Promise<OrganizationDoc | null> {
+  const c = ctx.mongo.collections;
+  const origin =
+    (await loadInspectionForEvent(ctx, envelope)) ??
+    (envelope.sessionId ? await c.inspections.findOne({ 'collection.sessionId': envelope.sessionId }) : null) ??
+    (envelope.correlationId ? await c.inspections.findOne({ 'collection.correlationId': envelope.correlationId }) : null);
+  if (origin) return c.organizations.findOne({ _id: origin.organizationId });
+  const candidates = await c.organizations.find({}).limit(2).toArray();
+  return candidates.length === 1 ? candidates[0]! : null;
+}
+
 async function handleUnmatchedMedia(
   ctx: AppContext,
   envelope: WhaplyEventEnvelope,
@@ -1518,10 +1584,7 @@ async function handleUnmatchedMedia(
 ): Promise<IngestOutcome> {
   const c = ctx.mongo.collections;
   if (await c.unmatchedMedia.findOne({ eventId: envelope.eventId })) return 'processed';
-  const inspection = await loadInspectionForEvent(ctx, envelope);
-  const organization = inspection
-    ? await c.organizations.findOne({ _id: inspection.organizationId })
-    : await c.organizations.findOne({}, { sort: { createdAt: 1 } });
+  const organization = await organizationForUnmatched(ctx, envelope);
   if (!organization) return 'ignored';
 
   const media = await ctx.integrations.whaply.fetchMedia(data.mediaRef);
@@ -1717,7 +1780,8 @@ export async function requestCorrection(
     instruction: slotDocs.find((s) => s.code === code)?.instruction ?? settings.instructions[code] ?? null,
   }));
   const collection: InspectionCollection = {
-    ...newCollection(plan, requiredSlots, round),
+    // A correção segue pelo mesmo canal da coleta original (o motorista já conhece o formulário/chat).
+    ...newCollection(plan, requiredSlots, round, inspection.collection?.photoChannel ?? 'CHAT'),
     status: plan.guided ? 'REQUESTED' : plan.status,
     requireOdometer,
     requestedAt: plan.guided ? now : null,

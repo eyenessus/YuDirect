@@ -17,7 +17,7 @@ import {
 import type { AppContext } from '../context.js';
 import { badRequest, conflict, notFound } from '../common/errors.js';
 import { generateToken, sha256 } from '../common/helpers.js';
-import type { DriverDoc, MaintenanceRequestDoc, ReceivableDoc } from '../database/types.js';
+import type { DriverDoc, MaintenanceRequestDoc, ReceivableDoc, RentalDoc } from '../database/types.js';
 import { audit } from './common.js';
 import { buildPaymentSchedule, remainingCents } from './finance.js';
 import { describeFiles, requireFile } from './files.js';
@@ -435,31 +435,65 @@ export async function createMaintenanceRequest(
     photos.push(file._id);
   }
   const driver = await loadDriver(ctx, auth);
-  const vehicle = await ctx.mongo.collections.vehicles.findOne({ _id: rental.vehicleId, organizationId: auth.organizationId });
-  const now = new Date();
-  const doc: MaintenanceRequestDoc = {
-    _id: new ObjectId(),
+  return insertMaintenanceRequest(ctx, {
     organizationId: auth.organizationId,
     driverId: auth.driverId,
-    rentalId: rental._id,
-    vehicleId: rental.vehicleId,
+    driverName: driver.fullName,
+    rental,
     category: body.category,
     description: body.description,
     vehicleStopped: body.vehicleStopped,
     photoFileIds: photos,
+    auditAction: 'driverPortal.maintenanceRequest',
+  });
+}
+
+/**
+ * Grava o pedido de manutenção, avisa o dono e audita. Usado pela Área do Motorista e pelo menu
+ * Manutenção do WhatsApp (evento `maintenance.requested` do Whaply). Quem chama já validou a
+ * locação e as fotos.
+ */
+export async function insertMaintenanceRequest(
+  ctx: AppContext,
+  input: {
+    organizationId: ObjectId;
+    driverId: ObjectId;
+    driverName: string;
+    rental: Pick<RentalDoc, '_id' | 'vehicleId'>;
+    category: MaintenanceRequestCreate['category'];
+    description: string;
+    vehicleStopped: boolean;
+    photoFileIds: ObjectId[];
+    auditAction: 'driverPortal.maintenanceRequest' | 'whatsapp.maintenanceRequest';
+    sourceEventId?: string;
+  },
+): Promise<MaintenanceRequestDoc> {
+  const vehicle = await ctx.mongo.collections.vehicles.findOne({ _id: input.rental.vehicleId, organizationId: input.organizationId });
+  const now = new Date();
+  const doc: MaintenanceRequestDoc = {
+    _id: new ObjectId(),
+    organizationId: input.organizationId,
+    driverId: input.driverId,
+    rentalId: input.rental._id,
+    vehicleId: input.rental.vehicleId,
+    category: input.category,
+    description: input.description,
+    vehicleStopped: input.vehicleStopped,
+    photoFileIds: input.photoFileIds,
     status: 'OPEN',
     responseNote: null,
     handledBy: null,
+    ...(input.sourceEventId ? { sourceEventId: input.sourceEventId } : {}),
     createdAt: now,
     updatedAt: now,
   };
   await ctx.mongo.collections.maintenanceRequests.insertOne(doc);
   await createNotification(ctx, {
-    organizationId: auth.organizationId,
+    organizationId: input.organizationId,
     type: 'MAINTENANCE',
-    severity: body.vehicleStopped || body.category === 'ACCIDENT' ? 'CRITICAL' : 'WARNING',
-    title: body.vehicleStopped ? 'Carro parado: pedido de manutenção' : 'Novo pedido de manutenção',
-    message: `${driver.fullName} (${vehicle?.plate ?? 'veículo'}): ${maintenanceRequestCategoryLabels[body.category]} — ${body.description.slice(0, 140)}`,
+    severity: input.vehicleStopped || input.category === 'ACCIDENT' ? 'CRITICAL' : 'WARNING',
+    title: input.vehicleStopped ? 'Carro parado: pedido de manutenção' : 'Novo pedido de manutenção',
+    message: `${input.driverName} (${vehicle?.plate ?? 'veículo'}): ${maintenanceRequestCategoryLabels[input.category]} — ${input.description.slice(0, 140)}`,
     subjectLabel: vehicle?.plate ?? null,
     entityType: 'maintenanceRequest',
     entityId: doc._id,
@@ -467,12 +501,12 @@ export async function createMaintenanceRequest(
     dedupeKey: `maintenance-request:${doc._id.toHexString()}`,
   });
   await audit(ctx, {
-    organizationId: auth.organizationId,
+    organizationId: input.organizationId,
     actorId: null,
-    action: 'driverPortal.maintenanceRequest',
+    action: input.auditAction,
     entityType: 'maintenanceRequest',
     entityId: doc._id,
-    after: { driverId: auth.driverId, category: body.category },
+    after: { driverId: input.driverId, category: input.category },
   });
   return doc;
 }

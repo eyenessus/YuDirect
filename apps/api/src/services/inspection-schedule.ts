@@ -161,7 +161,12 @@ export async function buildInspectionDoc(
     collection:
       plan.status === 'NOT_SCHEDULED'
         ? null
-        : newCollection(plan, await requiredSlotsSnapshot(ctx, input.organizationId, getWhatsappSettings(input.organization))),
+        : newCollection(
+            plan,
+            await requiredSlotsSnapshot(ctx, input.organizationId, getWhatsappSettings(input.organization)),
+            0,
+            getWhatsappSettings(input.organization).photoChannel,
+          ),
     photoEvidence: [],
     correctionRound: 0,
   };
