@@ -415,6 +415,50 @@ describe.skipIf(!WHAPLY_DIR)('E2E YuDirect ⇄ Whaply (código real dos dois lad
     expect(after!.photos).toHaveLength(5);
   });
 
+  it('vistoria pelo formulário (FLOW): template com botão de formulário → telas → fotos cifradas → KM → aguardando aprovação', async () => {
+    const setChannel = (photoChannel: 'CHAT' | 'FLOW') =>
+      api(cookie).put('/api/v1/inspection/whatsapp-settings', {
+        enabled: true, sendTime: '09:00', reminderAfterHours: 24, maxReminders: 1, collectionTtlHours: 72, instructions: {}, photoChannel,
+      });
+    expect((await setChannel('FLOW')).statusCode).toBe(200);
+    try {
+      const r = await newRental();
+      await cycle();
+
+      // O Whaply enviou o template do formulário: um botão de Flow (sem resposta rápida e sem link).
+      const tpl = (await metaSent()).filter((s) => s.body.to === r.waPhone && s.body.type === 'template').at(-1)!;
+      expect(tpl.body.template.name).toBe('yudirect_vistoria_solicitacao_flow');
+      const buttons = (tpl.body.template.components as Array<Record<string, any>>).filter((c) => c.type === 'button');
+      expect(buttons.map((b) => b.sub_type)).toEqual(['flow']);
+      const token = buttons[0].parameters[0].action.flow_token as string;
+
+      // O cliente abre o formulário e envia uma foto por tela.
+      expect((await wh<{ screen: string }>('/__test/flow/init', { token })).screen).toBe('VISTORIA_INICIO');
+      let screen = await wh<{ screen: string; data: { slot: string } }>('/__test/flow/start', { token });
+      const hashes: string[] = [];
+      for (let position = 0; screen.screen.startsWith('VISTORIA_FOTO_'); position += 1) {
+        const img = tinyPng(7000 + position);
+        hashes.push(createHash('sha256').update(img).digest('hex'));
+        screen = await wh('/__test/flow/photo', { token, position, slot: screen.data.slot, imageBase64: img.toString('base64') });
+      }
+      expect(hashes).toHaveLength(SLOTS.length);
+      expect(screen).toMatchObject({ screen: 'VISTORIA_KM', data: { slot: 'ODOMETER' } });
+      expect((await wh<{ screen: string }>('/__test/flow/km', { token, slot: 'ODOMETER', km: '61.050' })).screen).toBe('VISTORIA_FIM');
+      await wh('/__test/tick', {});
+
+      const done = await inspection(r.inspectionId);
+      if (done?.status !== 'SUBMITTED') await diagnose(r.inspectionId);
+      expect(done?.status).toBe('SUBMITTED'); // aguardando revisão humana
+      expect(done?.collection).toMatchObject({ status: 'COMPLETE', photoChannel: 'FLOW' });
+      expect(done?.odometerKm).toBe(61050);
+      const evidence = (done?.photoEvidence ?? []).filter((e) => e.source === 'WHATSAPP' && !e.late);
+      expect(evidence.map((e) => e.slotCode)).toEqual(SLOTS);
+      expect(evidence.map((e) => e.sha256)).toEqual(hashes); // bytes íntegros depois de cifrar/decifrar
+    } finally {
+      await setChannel('CHAT');
+    }
+  });
+
   it('menu da locadora: chamado de manutenção com foto e comprovante em PDF chegam ao YuDirect', async () => {
     const r = await newRental();
     const rental = await harness.ctx.mongo.collections.rentals.findOne({ driverId: new ObjectId(r.driverId), status: 'ACTIVE' });

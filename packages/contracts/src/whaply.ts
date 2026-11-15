@@ -193,8 +193,18 @@ export const whaplyMessageRequestSchema = z.object({
       round: z.number().int().min(0).max(50),
     })
     .nullable(),
+  /** Como o motorista envia as fotos (aditivo, v1). Ausente = CHAT (mensagens). */
+  collectionMode: z.enum(['CHAT', 'FLOW']).optional(),
 });
 export type WhaplyMessageRequest = z.infer<typeof whaplyMessageRequestSchema>;
+
+/** Canal das fotos da vistoria pelo WhatsApp: mensagens (uma foto por vez) ou formulário do WhatsApp. */
+export const whatsappPhotoChannels = ['CHAT', 'FLOW'] as const;
+export type WhatsappPhotoChannel = (typeof whatsappPhotoChannels)[number];
+export const whatsappPhotoChannelLabels: Record<WhatsappPhotoChannel, string> = {
+  CHAT: 'Mensagens (uma foto por vez)',
+  FLOW: 'Formulário do WhatsApp (uma tela por ângulo)',
+};
 
 export const whaplyRequestStates = [
   'ACCEPTED_BY_WHAPLY',
@@ -395,6 +405,8 @@ export const inspectionWhatsappSettingsSchema = z.object({
   maxReminders: z.coerce.number().int().min(0).max(3),
   collectionTtlHours: z.coerce.number().int().min(6).max(336),
   instructions: z.record(z.string().max(32), z.string().max(300)).default({}),
+  /** Por locadora: CHAT (padrão) ou FLOW. Vale para as vistorias planejadas a partir da mudança. */
+  photoChannel: z.enum(whatsappPhotoChannels).default('CHAT'),
 });
 export type InspectionWhatsappSettings = z.infer<typeof inspectionWhatsappSettingsSchema>;
 
@@ -405,6 +417,7 @@ export const DEFAULT_INSPECTION_WHATSAPP_SETTINGS: InspectionWhatsappSettings = 
   maxReminders: 1,
   collectionTtlHours: 72,
   instructions: {},
+  photoChannel: 'CHAT',
 };
 
 export const driverConsentUpdateSchema = z.discriminatedUnion('action', [

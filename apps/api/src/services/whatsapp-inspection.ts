@@ -15,6 +15,7 @@ import {
   type MessageStatus,
   type WhaplyEventEnvelope,
   type WhaplyMessageRequest,
+  type WhatsappPhotoChannel,
 } from '@yudirect/contracts';
 import type { AppContext } from '../context.js';
 import type {
@@ -248,9 +249,11 @@ export function newCollection(
   plan: CollectionPlan,
   requiredSlots: InspectionCollection['requiredSlots'],
   round = 0,
+  photoChannel: WhatsappPhotoChannel = 'CHAT',
 ): InspectionCollection {
   return {
     mode: plan.guided ? 'WHATSAPP' : 'WEB_LINK',
+    photoChannel,
     status: plan.status,
     requiredSlots,
     requireOdometer: true,
@@ -352,9 +355,11 @@ export async function createMessageIntent(
   let templateName: string;
   let bodyParams: string[];
   let session: WhaplyMessageRequest['session'] = null;
+  // Canal fixado ao planejar a coleta: FLOW usa os templates com botão de formulário (sem link).
+  const flow = (collection.photoChannel ?? 'CHAT') === 'FLOW';
 
   if (params.kind === 'INSPECTION_REQUEST') {
-    templateName = ctx.env.WHAPLY_TEMPLATE_REQUEST;
+    templateName = flow ? ctx.env.WHAPLY_TEMPLATE_REQUEST_FLOW : ctx.env.WHAPLY_TEMPLATE_REQUEST;
     const photoCount = collection.requiredSlots.length;
     bodyParams = [firstName, plate, formatDateBR(inspection.scheduledAt), String(photoCount), deadline];
     session = {
@@ -373,14 +378,14 @@ export async function createMessageIntent(
       ],
     };
   } else if (params.kind === 'REMINDER') {
-    templateName = ctx.env.WHAPLY_TEMPLATE_REMINDER;
+    templateName = flow ? ctx.env.WHAPLY_TEMPLATE_REMINDER_FLOW : ctx.env.WHAPLY_TEMPLATE_REMINDER;
     const ttlEnd = collection.requestedAt
       ? new Date(collection.requestedAt.getTime() + settings.collectionTtlHours * 3600 * 1000)
       : expiresAt;
     bodyParams = [firstName, plate, formatDateTimeLocal(ttlEnd)];
   } else {
     if (!params.correction) throw badRequest('Correção sem ângulos informados.');
-    templateName = ctx.env.WHAPLY_TEMPLATE_CORRECTION;
+    templateName = flow ? ctx.env.WHAPLY_TEMPLATE_CORRECTION_FLOW : ctx.env.WHAPLY_TEMPLATE_CORRECTION;
     bodyParams = [
       firstName,
       plate,
@@ -419,9 +424,11 @@ export async function createMessageIntent(
       name: templateName,
       language: ctx.env.WHAPLY_TEMPLATE_LANGUAGE,
       bodyParams,
-      urlButtonParam: token,
+      // O template do formulário não tem botão de link (decisão de 14/11/2026).
+      urlButtonParam: flow ? null : token,
     },
     session,
+    ...(flow ? { collectionMode: 'FLOW' as const } : {}),
   };
   const body = JSON.stringify(request);
   const now = new Date();
@@ -1761,7 +1768,8 @@ export async function requestCorrection(
     instruction: slotDocs.find((s) => s.code === code)?.instruction ?? settings.instructions[code] ?? null,
   }));
   const collection: InspectionCollection = {
-    ...newCollection(plan, requiredSlots, round),
+    // A correção segue pelo mesmo canal da coleta original (o motorista já conhece o formulário/chat).
+    ...newCollection(plan, requiredSlots, round, inspection.collection?.photoChannel ?? 'CHAT'),
     status: plan.guided ? 'REQUESTED' : plan.status,
     requireOdometer,
     requestedAt: plan.guided ? now : null,

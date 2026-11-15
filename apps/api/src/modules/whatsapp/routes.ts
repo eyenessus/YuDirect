@@ -201,13 +201,15 @@ export async function registerWhatsappRoutes(app: FastifyInstance): Promise<void
       const ctx = request.appCtx;
       const { organizationId } = requireAuthContext(request);
       const org = await ctx.mongo.collections.organizations.findOne({ _id: organizationId });
+      const settings = getWhatsappSettings(org);
+      const flow = settings.photoChannel === 'FLOW';
       return {
-        settings: getWhatsappSettings(org),
+        settings,
         channel: ctx.integrations.whaply.status(),
         templates: {
-          request: ctx.env.WHAPLY_TEMPLATE_REQUEST,
-          reminder: ctx.env.WHAPLY_TEMPLATE_REMINDER,
-          correction: ctx.env.WHAPLY_TEMPLATE_CORRECTION,
+          request: flow ? ctx.env.WHAPLY_TEMPLATE_REQUEST_FLOW : ctx.env.WHAPLY_TEMPLATE_REQUEST,
+          reminder: flow ? ctx.env.WHAPLY_TEMPLATE_REMINDER_FLOW : ctx.env.WHAPLY_TEMPLATE_REMINDER,
+          correction: flow ? ctx.env.WHAPLY_TEMPLATE_CORRECTION_FLOW : ctx.env.WHAPLY_TEMPLATE_CORRECTION,
           language: ctx.env.WHAPLY_TEMPLATE_LANGUAGE,
         },
       };

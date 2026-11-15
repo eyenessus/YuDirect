@@ -32,6 +32,7 @@ import type {
   FilePurpose,
   CollectionMode,
   CollectionStatus,
+  WhatsappPhotoChannel,
   ConsentSource,
   ErrorSource,
   MessageKind,
@@ -391,6 +392,8 @@ export interface InspectionDoc extends Tenant {
 
 export interface InspectionCollection {
   mode: CollectionMode;
+  /** Canal das fotos fixado ao planejar a coleta (mudar a configuração não afeta coleta em andamento). */
+  photoChannel?: WhatsappPhotoChannel;
   status: CollectionStatus;
   /** Snapshot dos ângulos exigidos na rodada atual (ordem da coleta). */
   requiredSlots: Array<{ code: string; label: string; order: number; instruction: string | null }>;
