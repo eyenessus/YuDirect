@@ -39,5 +39,12 @@ Variáveis: `WHAPLY_TEMPLATE_REQUEST/REMINDER/CORRECTION` e as versões `_FLOW`.
 3. Dono liga "Solicitar fotos automaticamente pelo WhatsApp" em Configurações de Vistoria, escolhe o canal e registra o consentimento dos motoristas.
 4. Primeiro teste com um motorista interno.
 
+## Estado da ativação em produção (15/11/2026)
+- Código publicado: YuDirect v33 (`916bc83d`, branch `main`; o Heroku publica sozinho a partir dela) e Whaply v129.
+- **Integração ligada** no Heroku do YuDirect: `WHAPLY_INTEGRATION_ENABLED=true`, `WHAPLY_API_URL=https://api.whaply.com`, chaves `WHAPLY_OUTBOUND_*` (id `yudirect-1`) e `WHAPLY_INBOUND_*` (id `whaply-1`), `WHAPLY_ORGANIZATION_ID=6af2910d1e5696ca49da726c`. As chaves ficam só nas config vars (nunca no git).
+- **Nada é disparado** até o dono ligar a coleta pelo WhatsApp nas Configurações de Vistoria da organização.
+- **Canal FLOW indisponível na FF por enquanto:** a Meta recusou publicar o Flow na WABA da FF ("Blocked by Integrity", código 139000). Enquanto isso, usar o canal **CHAT** (padrão). Os templates do canal CHAT foram criados na FF e estão em análise na Meta.
+- O passo a passo completo (IDs na Meta, script de criação do Flow e dos templates, como liberar quando o bloqueio sair) está em `docs/architecture/VISTORIA_WHATSAPP_FLOW_IMPLEMENTACAO.md` do repositório Whaply, seção 11.
+
 ## Testes
 `whatsapp-locadora.test.ts` (eventos de manutenção/comprovante), `whatsapp-flow-channel.test.ts` (canal e templates), `e2e-whaply-cross.test.ts` (formulário completo com fotos cifradas, manutenção e comprovante, com o código real do Whaply via `WHAPLY_E2E_DIR`).
