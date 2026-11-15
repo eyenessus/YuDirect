@@ -112,7 +112,8 @@ const formatDateTimeBR = (iso: string) =>
 
 async function loadReceipts() {
   try {
-    receipts.value = (await api.get<{ data: PaymentReceiptDTO[] }>(`/rentals/${props.rentalId}/payment-receipts`)).data;
+    const res = await api.get<{ data?: PaymentReceiptDTO[] }>(`/rentals/${props.rentalId}/payment-receipts`);
+    receipts.value = Array.isArray(res?.data) ? res.data : [];
   } catch {
     receipts.value = []; // a lista de pagamentos continua funcionando sem os comprovantes
   }
@@ -121,9 +122,8 @@ async function loadReceipts() {
 async function markReviewed(receipt: PaymentReceiptDTO) {
   reviewing.value = receipt.id;
   try {
-    receipts.value = (
-      await api.post<{ data: PaymentReceiptDTO[] }>(`/rentals/${props.rentalId}/payment-receipts/${receipt.id}/review`, {})
-    ).data;
+    const res = await api.post<{ data?: PaymentReceiptDTO[] }>(`/rentals/${props.rentalId}/payment-receipts/${receipt.id}/review`, {});
+    receipts.value = Array.isArray(res?.data) ? res.data : receipts.value;
     toasts.success('Comprovante marcado como conferido');
   } catch (err) {
     toasts.error('Não foi possível marcar o comprovante', err instanceof ApiRequestError ? err.message : undefined);
